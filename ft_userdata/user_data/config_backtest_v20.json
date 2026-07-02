@@ -1,0 +1,155 @@
+{
+    "timeframe": "15m",
+    "max_open_trades": 3,
+    "stake_currency": "USDT",
+    "stake_amount": "unlimited",
+    "tradable_balance_ratio": 0.99,
+    "fiat_display_currency": "USD",
+    "dry_run": true,
+    "dry_run_wallet": 1000,
+    "cancel_open_orders_on_exit": false,
+    "margin_mode": "isolated",
+    "trading_mode": "futures",
+    "unfilledtimeout": {
+        "entry": 10,
+        "exit": 10,
+        "exit_timeout_count": 0,
+        "unit": "minutes"
+    },
+    "entry_pricing": {
+        "price_side": "same",
+        "use_order_book": true,
+        "order_book_top": 1,
+        "price_last_balance": 0.0,
+        "check_depth_of_market": {
+            "enabled": false,
+            "bids_to_ask_delta": 1
+        }
+    },
+    "exit_pricing": {
+        "price_side": "same",
+        "use_order_book": true,
+        "order_book_top": 1
+    },
+    "order_types": {
+        "entry": "limit",
+        "exit": "limit",
+        "stoploss": "market",
+        "stoploss_on_exchange": false
+    },
+    "exchange": {
+        "name": "bybit",
+        "key": "VOTRE_CLE_BYBIT",
+        "secret": "VOTRE_SECRET_BYBIT",
+        "ccxt_config": {},
+        "ccxt_async_config": {},
+        "pair_whitelist": [
+            "BTC/USDT:USDT",
+            "ETH/USDT:USDT"
+        ],
+        "pair_blacklist": [
+            "DOGE/USDT:USDT"
+        ]
+    },
+    "pairlists": [
+        {
+            "method": "StaticPairList"
+        }
+    ],
+    "telegram": {
+        "enabled": false,
+        "token": "",
+        "chat_id": ""
+    },
+    "api_server": {
+        "enabled": true,
+        "listen_ip_address": "0.0.0.0",
+        "listen_port": 8080,
+        "verbosity": "error",
+        "enable_openapi": false,
+        "jwt_secret": "my-secret-key",
+        "ws_token": "my-ws-token",
+        "CORS_origins": [],
+        "username": "freqtrader",
+        "password": "superpassword"
+    },
+    "bot_name": "freqtrade_bot",
+    "initial_state": "running",
+    "force_entry_enable": false,
+    "internals": {
+        "process_throttle_secs": 5
+    },
+    "freqai": {
+        "enabled": true,
+        "purge_old_models": false,
+        "live_retraining_hours": 24,
+        "expiration_hours": 48,
+        "train_period_days": 30,
+        "backtest_period_days": 7,
+        "identifier": "bybit-futures-predator-v20-backtest",
+        "tensorboard": false,
+        "rl_config": {
+            "enabled": true,
+            "tensorboard": false,
+            "model_type": "PPO",
+            "policy_type": "MlpPolicy",
+            "model_kwargs": {
+                "device": "cpu"
+            },
+            "drop_ohlc_from_features": false,
+            "add_state_info": false,
+            "net_arch": [
+                128,
+                128
+            ],
+            "train_cycles": 10,
+            "model_training_parameters": {
+                "learning_rate": 3e-05,
+                "clip_range": 0.15,
+                "ent_coef": 0.08,
+                "gae_lambda": 0.95,
+                "n_steps": 2048,
+                "batch_size": 64,
+                "n_epochs": 10,
+                "vf_coef": 0.05
+            },
+            "model_reward_parameters": {
+                "alpha": 1.0,
+                "beta": 2.0,
+                "dd_threshold": 0.03,
+                "taker_fee": 0.00055,
+                "maker_fee": 0.0002,
+                "fee_penalty_multiplier": 50.0,
+                "realized_win_multiplier": 100.0,
+                "realized_loss_multiplier": 200.0,
+                "step_reward_multiplier": 10.0
+            },
+            "optuna_tuning": false,
+            "optuna_trials": 15
+        },
+        "feature_parameters": {
+            "include_timeframes": [
+                "15m",
+                "1h",
+                "4h"
+            ],
+            "include_corr_pairlist": [
+                "BTC/USDT:USDT",
+                "ETH/USDT:USDT"
+            ],
+            "label_period_candles": 8,
+            "include_shifted_candles": 2,
+            "principal_component_analysis": true,
+            "use_SVM_to_remove_outliers": false,
+            "indicator_periods_candles": [
+                14,
+                15
+            ]
+        },
+        "data_split_parameters": {
+            "test_size": 0.25,
+            "shuffle": false
+        },
+        "zmq_port": 5555
+    }
+}

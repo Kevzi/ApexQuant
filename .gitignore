@@ -1,0 +1,25 @@
+# Données & modèles (régénérés, lourds)
+ft_userdata/user_data/data/
+ft_userdata/user_data/models/
+ft_userdata/user_data/logs/
+!**/.gitkeep
+
+# Artefacts runtime
+*.log
+*.err
+*.out
+*.sqlite
+*.sqlite-*
+*.sqlite.bak*
+freqai_telemetry.json
+lark_balance.json
+rewards_data.json
+alpha_signals*.csv
+
+# Secrets (à ne PAS committer)
+ctrader_tokens.json
+
+# Python
+__pycache__/
+*.pyc
+.env/

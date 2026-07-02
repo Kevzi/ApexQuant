@@ -1,0 +1,1259 @@
+Technical Blueprint for a Production-Grade Machine Learning Trading Architecture: A FreqAI and LightGBM Framework
+To survive and extract alpha from the highly competitive and microstructurally volatile cryptocurrency markets, institutional trading desks must transition from heuristics-based indicators to mathematically rigorous, machine learning-driven decision engines.[1, 2] This technical blueprint presents a production-grade algorithmic system engineered specifically for the Python-based Freqtrade framework.[3] It leverages the FreqAI machine learning extension coupled with a LightGBM regressor to predict time-series targets.[1, 3] The entire pipeline is designed to enforce stationarity, mitigate label noise, reject toxic market regimes, and mathematically optimize position sizing.[4, 5, 6]
+--------------------------------------------------------------------------------
+1. Feature Engineering (Les lunettes de l'IA)
+The raw price series of cryptographic assets are highly non-stationary, exhibit heavy tails, and suffer from a low signal-to-noise ratio.[2, 6] Feeding raw data directly into tree-based ensemble models like LightGBM leads to severe overfitting and out-of-sample performance degradation.[2, 6] To resolve this, the feature engineering pipeline transforms raw market data into stationary, predictive representations.[1, 2] All features created for training are prepended with the % character (or %% if they are to be returned to the strategy for plotting and monitoring), informing FreqAI’s internal metadata parser that these are training inputs.[3]
+The Hurst Exponent (H)
+The Hurst exponent measures the long-term memory or fractional integration of a time series, classifying its behavior as mean-reverting, trending, or a random walk.[7, 8] The classical approach uses Rescaled Range (R/S) analysis.[7, 9] For a time series X={x 
+1
+​
+ ,x 
+2
+​
+ ,…,x 
+n
+​
+ }, the series is divided into chunks of length a.[7] For each chunk:
+Mean: m= 
+a
+1
+​
+  
+i=1
+∑
+a
+​
+ x 
+i
+​
+ 
+[7]
+Mean-Centered Series: Y 
+t
+​
+ =x 
+t
+​
+ −mfor t=1,…,a
+[7]
+Cumulative Deviation: Z 
+t
+​
+ = 
+j=1
+∑
+t
+​
+ Y 
+j
+​
+ for t=1,…,a
+[7]
+Range: R(a)=max(Z 
+1
+​
+ ,…,Z 
+a
+​
+ )−min(Z 
+1
+​
+ ,…,Z 
+a
+​
+ )
+[7]
+Standard Deviation: S(a)= 
+a
+1
+​
+  
+i=1
+∑
+a
+​
+ (x 
+i
+​
+ −m) 
+2
+ 
+
+​
+ 
+[7]
+The rescaled range scales according to a power law governed by the Hurst exponent [7, 8]:
+$$E\left \propto C \cdot a^H$$ [7, 8]
+Alternatively, Ernie Chan’s variance-lag formulation can be implemented for high-frequency price differences.[10] If z is the log price, the variance of the differences at interval τ scales proportionally to the lag [10]:
+Var(z 
+t
+​
+ −z 
+t−τ
+​
+ )∝τ 
+2H
+ 
+[10]
+Taking the logarithm of both sides yields a linear equation where the slope of the log-log plot directly estimates H [10]:
+log(Var(z 
+t
+​
+ −z 
+t−τ
+​
+ ))∝2Hlog(τ)
+[10]
+The physical interpretations of the Hurst exponent are detailed below:
+Hurst Value Range
+Market Behavior
+Statistical Property
+Strategy Assignment
+H<0.5
+Mean-Reverting
+Anti-persistent (reverses direction frequently) [8, 9]
+Mean-reversion, market-making [8, 9]
+H=0.5
+Random Walk
+Memoryless (Brownian motion) [7, 8]
+No execution edge, avoid trading [6, 7]
+H>0.5
+Trending
+Persistent (momentum-driven) [7, 9]
+Trend-following, breakout strategies [6, 8]
+Volume Z-Score (Z 
+vol
+​
+ )
+Volume in cryptocurrency markets is highly non-stationary and exhibits clustering.[2] Standard volume metrics must be normalized to represent statistical anomalies relative to a rolling lookback window w.[11, 12] The rolling Z-score standardizes volume:
+Z 
+vol,t
+​
+ = 
+σ 
+vol,w,t
+​
+ 
+V 
+t
+​
+ −μ 
+vol,w,t
+​
+ 
+​
+ 
+[11, 12]
+Where V 
+t
+​
+  is the volume of the current candle, μ 
+vol,w,t
+​
+  is the rolling mean volume over window w, and σ 
+vol,w,t
+​
+  is the rolling standard deviation of volume over the same window.[11, 12] This transformation isolates high-volume institutional breakout signals from baseline retail market noise.[11, 12]
+Order Book Imbalance (OBI)
+Order Book Imbalance captures the immediate, high-frequency asymmetry between buy and sell liquidity across N depth levels of the central limit order book.[13, 14] Rather than evaluating only Level 1 top-of-book volumes, the calculation aggregates volumes across N levels to identify institutional liquidity walls [14, 15]:
+Imb 
+N
+​
+ (t)= 
+∑ 
+i=0
+N−1
+​
+ V 
+b,i
+​
+ (t)+∑ 
+i=0
+N−1
+​
+ V 
+a,i
+​
+ (t)
+∑ 
+i=0
+N−1
+​
+ V 
+b,i
+​
+ (t)−∑ 
+i=0
+N−1
+​
+ V 
+a,i
+​
+ (t)
+​
+ 
+[15]
+Where V 
+b,i
+​
+ (t) and V 
+a,i
+​
+ (t) represent the bid volume and ask volume at the i-th depth level at time t.[15] The resulting metric is bounded: Imb 
+N
+​
+ (t)∈[−1,1].[13, 15] Values approaching −1 indicate massive ask-side overhead (selling pressure), whereas values approaching +1 indicate deep bid-side support (buying pressure).[13, 14]
+Fast Fourier Transform (FFT) and Dominant Frequencies
+Financial time series contain cyclical components driven by funding rate periods, macro calendars, and execution cycles.[16] The Discrete Fourier Transform (DFT) maps the time-domain price series into its component frequencies [16, 17]:
+X 
+k
+​
+ = 
+n=0
+∑
+M−1
+​
+ x 
+n
+​
+ e 
+−i 
+M
+2π
+​
+ kn
+ 
+[17]
+Using the Fast Fourier Transform (FFT) algorithm, the system extracts the power spectral density across a rolling window.[16, 17] By identifying the frequency f 
+dom
+​
+  that corresponds to the maximum amplitude in the normalized spectrum (excluding the DC/zero-frequency component), the model isolates the dominant cyclical period.[16, 17] This cyclical baseline allows the model to predict structural turning points.[16]
+Principal Component Analysis (PCA)
+When expanding the feature set to include multiple lag intervals, timeframes, and correlated currency pairs, tree-based models suffer from the curse of dimensionality and collinearity.[3, 18] PCA projects the normalized feature matrix X onto orthogonal principal axes.[18] Given the covariance matrix Σ:
+Σ= 
+T
+1
+​
+ X 
+T
+ X=QΛQ 
+T
+ 
+The projection onto the top k eigenvectors (associated with the largest eigenvalues) reduces the input space dimensions while preserving over 95% of the system’s variance.[18] FreqAI natively supports this step by enabling the PCA parameter in the configuration file.[18, 19]
+The following class implements these vectorized feature engineering steps in Pandas and NumPy:
+import numpy as np
+import pandas as pd
+from scipy.fft import rfft, rfftfreq
+
+class FeatureEngineeringPipeline:
+    """
+    Vectorized mathematical and statistical feature extraction pipeline 
+    optimized for high-frequency cryptocurrency time-series.
+    """
+    
+    @staticmethod
+    def calculate_hurst(series: pd.Series, window: int = 300, lag_min: int = 2, lag_max: int = 20) -> pd.Series:
+        """
+        Estimates the rolling Hurst Exponent using Ernie Chan's variance of differences method.
+        H < 0.5: Mean Reverting, H = 0.5: Random Walk, H > 0.5: Trending.
+        """
+        def _single_hurst(window_slice):
+            if len(window_slice) < window:
+                return np.nan
+            lags = np.arange(lag_min, lag_max)
+            # Volatility sampled at intervals of lag tau: std(z(t) - z(t - tau))
+            tau = [np.std(np.subtract(window_slice[lag:], window_slice[:-lag])) for lag in lags]
+            # Linear fit on log-log coordinates: log(tau) vs log(std_dev)
+            poly = np.polyfit(np.log(lags), np.log(tau), 1)
+            return poly  # The slope represents the Hurst Exponent
+
+        return series.rolling(window=window).apply(_single_hurst, raw=True)
+
+    @staticmethod
+    def calculate_volume_zscore(volume: pd.Series, window: int = 20) -> pd.Series:
+        """
+        Normalizes volume into a rolling Z-score to extract anomalous trading volume.
+        """
+        rolling_mean = volume.rolling(window=window).mean()
+        rolling_std = volume.rolling(window=window).std()
+        # Prevent division by zero anomalies
+        rolling_std = rolling_std.replace(0, np.nan).fillna(method='bfill')
+        return (volume - rolling_mean) / rolling_std
+
+    @staticmethod
+    def calculate_order_book_imbalance(dataframe: pd.DataFrame, levels: int = 5) -> pd.Series:
+        """
+        Computes multi-level order book imbalance (OBI) bounded between -1.0 and 1.0.
+        Expects order book columns formatted as: 'bid_sz_00', 'ask_sz_00', etc.
+        """
+        bid_cols = [f"bid_sz_{i:02d}" for i in range(levels)]
+        ask_cols = [f"ask_sz_{i:02d}" for i in range(levels)]
+        
+        # Ensure columns exist in dataframe; if not, return neutral imbalance
+        if not all(col in dataframe.columns for col in bid_cols + ask_cols):
+            return pd.Series(0.0, index=dataframe.index)
+            
+        sum_bids = dataframe[bid_cols].sum(axis=1)
+        sum_asks = dataframe[ask_cols].sum(axis=1)
+        
+        denominator = sum_bids + sum_asks
+        imbalance = (sum_bids - sum_asks) / denominator
+        return imbalance.fillna(0.0)
+
+    @staticmethod
+    def calculate_dominant_frequency(series: pd.Series, window: int = 128, sampling_rate: float = 1.0) -> pd.Series:
+        """
+        Applies a rolling Fast Fourier Transform (FFT) to extract the dominant cycle frequency.
+        """
+        def _get_dominant_freq(window_slice):
+            n = len(window_slice)
+            if n < window:
+                return np.nan
+            # Fast Fourier Transform of real-valued signal
+            fourier = rfft(window_slice)
+            frequencies = rfftfreq(n, d=1.0/sampling_rate)
+            magnitudes = np.abs(fourier)
+            # Suppress the DC offset (frequency = 0)
+            magnitudes = 0.0
+            dominant_index = np.argmax(magnitudes)
+            return frequencies[dominant_index]
+
+        return series.rolling(window=window).apply(_get_dominant_freq, raw=True)
+
+def populate_any_indicators(dataframe: pd.DataFrame, metadata: dict, strategy) -> pd.DataFrame:
+    """
+    Main Freqtrade indicator entry point.
+    All training features must be prefixed with '%' to be isolated by FreqAI.
+    """
+    pipeline = FeatureEngineeringPipeline()
+    
+    # Mathematical and Spectral Features
+    dataframe['%-hurst'] = pipeline.calculate_hurst(dataframe['close'], window=300)
+    dataframe['%-vol_zscore'] = pipeline.calculate_volume_zscore(dataframe['volume'], window=20)
+    dataframe['%-dominant_fft_freq'] = pipeline.calculate_dominant_frequency(dataframe['close'], window=128)
+    
+    # Microstructural Features
+    dataframe['%-order_book_imbalance_l5'] = pipeline.calculate_order_book_imbalance(dataframe, levels=5)
+    
+    return dataframe
+--------------------------------------------------------------------------------
+2. Labeling (La définition de la cible)
+A major failure point of retail-grade machine learning models is the use of simple, fixed-horizon labels.[20, 21] Labeling a sample as 1 or −1 based solely on the price difference h candles in the future ignores the intra-horizon trajectory.[4, 20] If a trade hits a stop-loss after 2 candles but rallies to take-profit by candle h, a fixed-horizon label marks the sample as a success (1), whereas a live trade would have been stopped out at a loss.[4, 20] This introduces significant label noise.[4, 20]
+The Triple-Barrier Method
+Introduced by Marcos Lopez de Prado in Advances in Financial Machine Learning, the Triple-Barrier Method maps targets directly to live risk execution by setting three dynamic, concurrent barriers [20, 22]:
+Upper Barrier (Take-Profit): An upper horizontal boundary scaled by dynamic volatility:
+p 
+up
+​
+ =p 
+t 
+0
+​
+ 
+​
+ ⋅(1+θ 
+up
+​
+ ⋅σ 
+t 
+0
+​
+ 
+​
+ )
+[20]
+Lower Barrier (Stop-Loss): A lower horizontal boundary scaled by dynamic volatility:
+p 
+dn
+​
+ =p 
+t 
+0
+​
+ 
+​
+ ⋅(1−θ 
+dn
+​
+ ⋅σ 
+t 
+0
+​
+ 
+​
+ )
+[20]
+Vertical Barrier (Time Expiry): A vertical boundary that caps the holding period to h candles: t 
+1
+​
+ =t 
+0
+​
+ +h [4, 20]
+The local volatility metric σ 
+t 
+0
+​
+ 
+​
+  is calculated dynamically using the Exponentially Weighted Moving Standard Deviation of returns over a specified lookback window [4, 20]:
+σ 
+t 
+0
+​
+ 
+​
+ = 
+EMA((r 
+t
+​
+ −μ 
+r
+​
+ ) 
+2
+ ,span=100)
+
+​
+ 
+[20]
+This ensures the barriers scale naturally with market volatility—widening during chaotic regimes to avoid premature stop-outs, and narrowing during quiet regimes to improve capital efficiency.[4, 22]
+      Price
+        ▲                                              ● Upper Barrier (Take-Profit)
+        │                                             / 
+        │                                  /\        /  
+        │                    /\           /  \      /   
+        │                   /  \   /\    /    \────/────
+  p_t0  ├──────────────────/────\_/──\__/──────/────────
+        │    \            /                   /         
+        │     \          /                   /          
+        │      \________/                   /           
+        │                                  /            ● Lower Barrier (Stop-Loss)
+        │                                 /
+        └────────────────────────────────┴──────────────► Time
+        t0                               t0 + h (Vertical Time Barrier)
+Mathematical Target Attribution
+The target variable y∈{−1,0,1} is determined by which barrier is breached first:
+y = \begin{cases} 1 & \text{if } p_{t} \geq p_{\text{up}} \text{ before } t_1 \text{ and before } p_{t} \leq p_{\text{dn}} \ -1 & \text{if } p_{t} \leq p_{\text{dn}} \text{ before } t_1 \text{ and before } p_{t} \geq p_{\text{up}} \ 0 \quad (\text{or } \text{sign}(r_{t_1})) & \text{if price touches the vertical barrier } t_1 \text{ first} \end{cases} [4, 20]
+In FreqAI, targets are prepended with & to be registered by the training pipeline (e.g., &-s_tbm_bin).[23, 24]
+Smoothed Logarithmic Returns
+For continuous-value regression models (the default optimization target of LightGBM), raw returns are highly non-stationary and noisy.[2] The system utilizes a smoothed log-return target to suppress microstructural noise [2]:
+r 
+t,k
+​
+ =log( 
+p 
+t−k
+​
+ 
+p 
+t
+​
+ 
+​
+ )
+[2]
+y 
+smooth,t
+​
+ = 
+M
+1
+​
+  
+j=0
+∑
+M−1
+​
+ r 
+t−j,k
+​
+ 
+[2]
+Where k is the forward return horizon (e.g., 3 candles) and M is the simple moving average smoothing window.[2] This target reduces model error and improves directional accuracy in out-of-sample evaluations.[2]
+Labeling Approach
+Path-Awareness
+Volatility-Adaptive
+Edge case handling
+Target Column Prefix
+Fixed Horizon
+No [20]
+No [21, 25]
+Fails during rapid trend reversals [20]
+&-s_close [23, 24]
+Triple-Barrier Method
+Yes [20]
+Yes [4, 25]
+Perfectly models live execution outcomes [4]
+&-s_tbm_bin [23, 26]
+Smoothed Log Returns
+Partial
+No
+Filters high-frequency microstructural noise [2]
+&-s_smoothed_return [23, 26]
+The following script implements the complete, vectorized Triple-Barrier labeling pipeline:
+import numpy as np
+import pandas as pd
+
+class TripleBarrierLabeler:
+    """
+    Implements Marcos Lopez de Prado's path-aware Triple-Barrier labeling method,
+    dynamically scaled by exponential standard deviation volatility.
+    """
+    
+    @staticmethod
+    def get_dynamic_volatility(close: pd.Series, span: int = 100) -> pd.Series:
+        """
+        Calculates exponential moving daily volatility (returns standard deviation).
+        """
+        returns = close.pct_change()
+        vol = returns.ewm(span=span, adjust=False).std()
+        return vol.fillna(method='bfill')
+
+    @staticmethod
+    def apply_triple_barrier(
+        close: pd.Series,
+        volatility: pd.Series,
+        pt_sl: tuple[float, float] = (2.0, 1.0),
+        vertical_horizon: int = 24
+    ) -> pd.DataFrame:
+        """
+        Computes barrier touches and returns labels:
+        1.0 : Take-profit hit first
+        -1.0: Stop-loss hit first
+        0.0 : Time barrier reached first
+        """
+        labels = pd.DataFrame(index=close.index, columns=["t1", "bin"])
+        timestamps = close.index
+        pt_mult, sl_mult = pt_sl
+        
+        for i in range(len(close) - 1):
+            start_time = timestamps[i]
+            vol = volatility.iloc[i]
+            if pd.isna(vol) or vol <= 0:
+                continue
+                
+            start_price = close.iloc[i]
+            upper_barrier = start_price * (1.0 + pt_mult * vol)
+            lower_barrier = start_price * (1.0 - sl_mult * vol)
+            
+            # Vertical barrier index limit
+            end_idx = min(i + vertical_horizon, len(close) - 1)
+            future_prices = close.iloc[i+1 : end_idx+1]
+            future_times = timestamps[i+1 : end_idx+1]
+            
+            # Default assignment is time expiry (vertical barrier)
+            labels.at[start_time, "t1"] = timestamps[end_idx]
+            labels.at[start_time, "bin"] = 0.0
+            
+            # Track price trajectory within the horizon
+            for t, price in zip(future_times, future_prices):
+                if price >= upper_barrier:
+                    labels.at[start_time, "t1"] = t
+                    labels.at[start_time, "bin"] = 1.0
+                    break
+                elif price <= lower_barrier:
+                    labels.at[start_time, "t1"] = t
+                    labels.at[start_time, "bin"] = -1.0
+                    break
+                    
+        return labels
+
+def set_freqai_targets(dataframe: pd.DataFrame, metadata: dict, strategy) -> pd.DataFrame:
+    """
+    Sets prediction targets for the FreqAI machine learning model.
+    All targets must begin with '&' to be detected by FreqAI.
+    """
+    labeler = TripleBarrierLabeler()
+    vol = labeler.get_dynamic_volatility(dataframe['close'], span=100)
+    
+    # Calculate path-aware Triple-Barrier binary labels
+    tbm_df = labeler.apply_triple_barrier(dataframe['close'], vol, pt_sl=(2.0, 1.0), vertical_horizon=24)
+    
+    dataframe['&-s_tbm_bin'] = tbm_df['bin'].astype(float)
+    return dataframe
+--------------------------------------------------------------------------------
+3. Anomaly Filtering and Market Regime Classification
+Trading models experience severe accuracy decay during structural shifts and anomalous volatility events, such as flash crashes or illiquid periods.[2, 5] To prevent the machine learning model from executing during toxic market conditions, the architecture incorporates a multi-tiered anomaly filtering and market regime classification pipeline.[5, 26]
+Dissimilarity Index (DI)
+The Dissimilarity Index (DI) quantifies the distance between real-time market data points and the training distribution to block predictions that fall outside the model's learned feature space.[18]
+Euclidean Distance (d 
+ab
+​
+ ):
+The Euclidean distance between any two standardized training feature vectors X 
+a
+​
+  and X 
+b
+​
+  is defined as [18]:
+d 
+ab
+​
+ = 
+j=1
+∑
+p
+​
+ (X 
+a,j
+​
+ −X 
+b,j
+​
+ ) 
+2
+ 
+
+​
+ 
+[18]
+Where p represents the total number of features (dimension of vector X).[18]
+Characteristic Distance ( 
+d
+ ):
+The characteristic distance measures the global dispersion of the training dataset [18]:
+d
+ = 
+n 
+2
+ 
+1
+​
+  
+a=1
+∑
+n
+​
+  
+b=1
+∑
+n
+​
+ d 
+ab
+​
+ 
+[18]
+Where n is the total number of training vectors.[18]
+New Prediction Distance (d 
+k
+​
+ ):
+For a live, out-of-sample feature vector X 
+k
+​
+ , its distance is the minimum distance to all historical training vectors [18]:
+d 
+k
+​
+ =arg 
+i
+min
+​
+ d 
+k,i
+​
+ 
+[18]
+Dissimilarity Index (DI 
+k
+​
+ ):
+The dissimilarity ratio measures training outliers [18]:
+DI 
+k
+​
+ = 
+d
+ 
+d 
+k
+​
+ 
+​
+ 
+[18]
+If DI 
+k
+​
+  is above the user-defined DI_threshold in the FreqAI configuration (typically set to 1.0), FreqAI identifies the prediction as an outlier and subtracts 1 from the do_predict control variable.[18, 23, 24]
+One-Class Support Vector Machine Outlier Detection
+The One-Class Support Vector Machine is an unsupervised learning algorithm that fits a decision boundary around the densest regions of the training feature space, identifying anomalies without requiring labeled outlier samples.[27, 28, 29]
+w,ξ,ρ
+min
+​
+  
+2
+1
+​
+ ∥w∥ 
+2
+ + 
+νn
+1
+​
+  
+i=1
+∑
+n
+​
+ ξ 
+i
+​
+ −ρ
+subject to ⟨w,Φ(X 
+i
+​
+ )⟩≥ρ−ξ 
+i
+​
+ ,ξ 
+i
+​
+ ≥0
+Where ν∈(0,1) (nu) controls the trade-off between the tightness of the boundary and the allowance of outliers in the training set.[18, 27] In financial applications, ν<0.05 is used to enforce strict statistical boundaries.[28] Under FreqAI, enabling use_SVM_to_remove_outliers trains an estimator that screens incoming predictions.[18, 23] If a sample is classified as an anomaly, the algorithm subtracts 1 from do_predict.[23, 24]
+The following table summarizes FreqAI's control logic based on do_predict [3, 23]:
+do_predict Value
+Model Trust Level
+Outlier Status
+Strategy Action
+1
+Highly Trustworthy
+Normal under both DI and One-Class SVM.[23, 24]
+Normal execution; open new trades.[3, 23]
+0
+Outlier Detected
+Flagged as outlier by either DI or One-Class SVM.[23, 24]
+Pause trade entry; monitor existing positions.[3, 23]
+-1
+Extreme Anomaly
+Flagged as outlier by both DI and One-Class SVM.[23, 24]
+Block entries; initiate emergency stop-loss.[3, 23]
+Hidden Markov Models (HMM) for Market Regime Classification
+The market transitions between distinct unobserved states, such as low-volatility bullish trends and high-volatility liquidations.[30, 31] A Gaussian Hidden Markov Model assumes that the observed log returns r 
+t
+​
+  are drawn from one of K hidden regimes, each governed by its own emission probability distribution [30, 31]:
+r 
+t
+​
+ ∼N(μ 
+S 
+t
+​
+ 
+​
+ ,σ 
+S 
+t
+​
+ 
+2
+​
+ )
+[30, 31]
+Where S 
+t
+​
+ ∈{0,…,K−1} represents the hidden state at time t, and transition dynamics are governed by transition matrix A [30, 31]:
+a 
+ij
+​
+ =P(S 
+t
+​
+ =j∣S 
+t−1
+​
+ =i)
+[30]
+By utilizing the Baum-Welch expectation-maximization algorithm to fit the model and the Viterbi algorithm to decode the current state sequence, the system identifies the active regime.[30, 31] If the probability of being in a high-volatility bearish regime (State 1) is elevated, the strategy halts trade entry or routes prediction tasks to specialized models trained specifically on that regime.[5, 31]
+The following implementation combines Gaussian HMM regime decoding and One-Class SVM outlier detection:
+import numpy as np
+import pandas as pd
+from hmmlearn.hmm import GaussianHMM
+from sklearn.svm import OneClassSVM
+
+class AnomalyFilteringEngine:
+    """
+    Implements high-fidelity anomaly detection and market regime classification.
+    """
+    def __init__(self, n_components: int = 2, nu: float = 0.05):
+        self.n_components = n_components
+        self.nu = nu
+        self.hmm = GaussianHMM(n_components=self.n_components, covariance_type="full", max_iter=10000, random_state=100)
+        self.oc_svm = OneClassSVM(kernel="rbf", nu=self.nu, gamma="scale")
+        
+    def fit_regimes(self, returns: pd.Series) -> np.ndarray:
+        """
+        Trains a Gaussian HMM on historical log returns to identify the active regime.
+        """
+        clean_returns = returns.dropna().values.reshape(-1, 1)
+        self.hmm.fit(clean_returns)
+        hidden_states = self.hmm.predict(clean_returns)
+        
+        # Sort states so that State 0 always represents the lowest volatility regime
+        state_means = [np.mean(clean_returns[hidden_states == i]) for i in range(self.n_components)]
+        state_vars = [np.var(clean_returns[hidden_states == i]) for i in range(self.n_components)]
+        
+        ordered_regimes = np.argsort(state_vars)
+        mapped_states = np.array([np.where(ordered_regimes == state) for state in hidden_states])
+        return mapped_states
+
+    def fit_outliers(self, features: np.ndarray) -> None:
+        """
+        Fits a One-Class Support Vector Machine decision boundary on standardized features.
+        """
+        self.oc_svm.fit(features)
+        
+    def predict_outlier(self, features: np.ndarray) -> np.ndarray:
+        """
+        Returns 1.0 for in-distribution data points, and -1.0 for anomalies.
+        """
+        return self.oc_svm.predict(features)
+
+# Integration example inside FreqAI Configuration:
+"""
+"freqai": {
+    "enabled": true,
+    "feature_parameters": {
+        "DI_threshold": 1.0,
+        "use_SVM_to_remove_outliers": true,
+        "svm_params": {
+            "nu": 0.05,
+            "kernel": "rbf"
+        }
+    }
+}
+"""
+--------------------------------------------------------------------------------
+4. Money Management and Risk Optimization
+Once the machine learning model generates an entry signal, position sizing and risk management are handled by a dynamic execution system.[32, 33] This system implements a fractional Kelly Criterion to optimize geometric wealth growth while integrating dynamic volatility-based trailing stops.[32, 34]
+The Fractional Kelly Criterion
+The discrete Kelly Criterion computes the mathematically optimal leverage coefficient (f 
+∗
+ ) to maximize long-term logarithmic capital growth [34, 35]:
+f 
+∗
+ = 
+R
+W⋅R−(1−W)
+​
+ =W− 
+R
+1−W
+​
+ 
+[33, 34]
+Where:
+W = Win probability (historical model precision expressed as a decimal) [33, 34]
+R = Payoff ratio (average winning trade return divided by average losing trade return) [33, 34]
+For continuous, non-Gaussian returns, the continuous Kelly fraction relates the excess return directly to variance [35]:
+f 
+∗
+ = 
+σ 
+2
+ 
+μ−r 
+f
+​
+ 
+​
+ 
+[35]
+Where μ represents the mean asset return, r 
+f
+​
+  is the risk-free rate, and σ 
+2
+  is the variance of returns.[35]
+The Volatility Paradox and Sizing Multipliers
+Using full Kelly sizing (f 
+∗
+ ) is mathematically optimal in frictionless environments but highly risky in live trading, as estimation errors in W and R can lead to severe drawdowns or risk of ruin.[32, 34] To mitigate this estimation risk, the system implements a fractional Kelly model [34, 35]:
+Half-Kelly (0.5⋅f 
+∗
+ ): Retains approximately 75% of the maximum compound growth rate while cutting drawdown variance by 75%.[34, 35]
+Quarter-Kelly (0.25⋅f 
+∗
+ ): Restricts allocations to 25% of the theoretical Kelly limit, providing a smoother equity curve and robust protection against estimation error.[32, 33, 34]
+A negative Kelly fraction (f 
+∗
+ ≤0) indicates a negative model expectancy in the current regime; in this case, the strategy blocks entry.[32, 33, 35]
+Volatility-Based Trailing Stops and Dynamic Sizing
+To protect capital against unexpected market shocks, the capital at risk is dynamically scaled using the Average True Range (ATR).[4, 32]
+The stop-loss distance (SL 
+dist
+​
+ ) from the entry price p 
+t
+​
+  is computed as:
+SL 
+dist,t
+​
+ =k⋅ATR 
+t
+​
+ 
+[4]
+Where k∈(1.5,3.0) represents the volatility multiplier.[4]
+Unified Position Sizing Formula
+By combining the fractional Kelly limit and the dynamic stop-loss distance, the system calculates the optimal position size (capital allocation) [32, 34]:
+Position Size (Units)= 
+SL 
+dist,t
+​
+ 
+Account Balance⋅f 
+fractional
+​
+ 
+​
+ 
+[32, 34]
+Position Size (Units)= 
+k⋅ATR 
+t
+​
+ 
+A 
+t
+​
+ ⋅γ⋅(W− 
+R
+1−W
+​
+ )
+​
+ 
+[32, 33, 34]
+Where A 
+t
+​
+  is the total account equity, and γ∈[0.1,0.5] is the fractional Kelly scaling multiplier.[32, 34]
+Dynamic Leverage Properties
+This formula establishes an adaptive sizing mechanism [32]:
+During low volatility regimes (narrow ATR), the stop-loss distance compresses.[4] This allows the system to scale up position size using higher leverage to target the exact risk fraction.[4, 32]
+During high volatility regimes (wide ATR), the stop-loss distance expands.[4] The system automatically reduces position size to keep absolute dollar risk constant.[4, 32]
+Low Volatility  => Compressing ATR => Tighter Stop Loss => Larger Position Size (Higher Leverage)
+High Volatility => Expanding ATR   => Wider Stop Loss   => Smaller Position Size (Lower Leverage)
+The table below outlines this relationship:
+Volatility State
+ATR Value
+Stop-Loss Distance
+Calculated Position Size
+Implied Leverage
+Compressed
+Small
+Tight [4]
+Large [32, 34]
+High [32]
+Normal
+Medium
+Standard
+Medium
+Moderate
+Expanded
+Large
+Wide [4]
+Small [32, 34]
+Low [32]
+The following class manages this dynamic position sizing and stop-loss logic:
+import numpy as np
+import pandas as pd
+
+class RiskManagementEngine:
+    """
+    Implements a fractional Kelly and ATR position-sizing framework 
+    with dynamic leverage scaling.
+    """
+    def __init__(self, win_rate: float, win_loss_ratio: float, kelly_fraction: float = 0.25):
+        self.w = win_rate
+        self.r = win_loss_ratio
+        self.gamma = kelly_fraction  # e.g., 0.25 for Quarter-Kelly
+
+    def get_fractional_kelly_risk(self) -> float:
+        """
+        Calculates the safe capital risk fraction.
+        """
+        if self.r <= 0 or self.w <= 0:
+            return 0.0
+        f_star = self.w - ((1.0 - self.w) / self.r)
+        fractional_risk = f_star * self.gamma
+        return max(fractional_risk, 0.0)
+
+    def calculate_atr_distance(self, high: pd.Series, low: pd.Series, close: pd.Series, period: int = 14, multiplier: float = 2.0) -> float:
+        """
+        Calculates the Average True Range (ATR) stop distance.
+        """
+        tr1 = high - low
+        tr2 = (high - close.shift(1)).abs()
+        tr3 = (low - close.shift(1)).abs()
+        
+        tr = pd.concat([tr1, tr2, tr3], axis=1).max(axis=1)
+        atr = tr.rolling(window=period).mean().iloc[-1]
+        return atr * multiplier
+
+    def compute_allocation(self, account_balance: float, entry_price: float, stop_distance: float) -> dict:
+        """
+        Calculates position size and leverage for the trade.
+        """
+        risk_fraction = self.get_fractional_kelly_risk()
+        if risk_fraction <= 0 or stop_distance <= 0:
+            return {"units": 0.0, "exposure": 0.0, "leverage": 0.0}
+            
+        allowed_loss = account_balance * risk_fraction
+        position_units = allowed_loss / stop_distance
+        total_exposure = position_units * entry_price
+        leverage = total_exposure / account_balance
+        
+        return {
+            "units": position_units,
+            "exposure": total_exposure,
+            "leverage": leverage,
+            "risk_pct": risk_fraction * 100.0
+        }
+--------------------------------------------------------------------------------
+5. Architectural Synthesis: The "Blueprint"
+The diagram below illustrates the end-to-end data flow and execution sequence of the synthesis architecture:
+                  ┌────────────────────────────────────────┐
+                  │          Real-Time Data Feed           │
+                  │   (OHLCV + Order Book + Order Flow)    │
+                  └───────────────────┬────────────────────┘
+                                      │
+                                      ▼
+                  ┌────────────────────────────────────────┐
+                  │       Part 1: Feature Extraction       │
+                  │  (Hurst Exponent, Volume Z-Score, OBI,  │
+                  │        Dominant FFT Frequencies)       │
+                  └───────────────────┬────────────────────┘
+                                      │
+                                      ▼
+                  ┌────────────────────────────────────────┐
+                  │       Part 3: Regime Detection         │
+                  │      (HMM Decodes Market Mood)         │
+                  └───────────┬────────────────┬───────────┘
+                              │                │
+             Low Volatility   │                │   High Volatility
+               (Regime 0)     ▼                ▼     (Regime 1)
+                  ┌────────────────┐      ┌────────────────┐
+                  │  Specialist 0  │      │  Specialist 1  │
+                  │ (LightGBM Reg) │      │ (LightGBM Reg) │
+                  └────────┬───────┘      └────────┬───────┘
+                           │                       │
+                           └───────────┬───────────┘
+                                       │
+                                       ▼
+                  ┌────────────────────────────────────────┐
+                  │     Outlier and Anomaly Filtering      │
+                  │  (DI + One-Class SVM flags outliers)   │
+                  └───────────────────┬────────────────────┘
+                                      │
+                           [do_predict == 1]
+                                      │
+                                      ▼
+                  ┌────────────────────────────────────────┐
+                  │      Part 4: Money Management          │
+                  │  (Fractional Kelly + ATR Trailing Stop)│
+                  └───────────────────┬────────────────────┘
+                                      │
+                                      ▼
+                  ┌────────────────────────────────────────┐
+                  │          Execution Pipeline            │
+                  │   (Dynamic Stop Loss, Trailing exit)   │
+                  └────────────────────────────────────────┘
+The following production strategy implements the complete mathematical pipeline within Freqtrade’s FreqAI framework:
+import numpy as np
+import pandas as pd
+from freqtrade.strategy import IStrategy
+from pandas import DataFrame
+# Import custom modules developed in sections 1, 2, 3 and 4
+# Assumed to be imported from user_data.strategies.utils
+
+class FreqaiHedgeFundStrategy(IStrategy):
+    """
+    Production-grade machine learning trading strategy combining Feature Engineering,
+    Triple-Barrier Labeling, HMM Regimes, SVM/DI Outliers, and Fractional Kelly Sizing.
+    """
+    # Strategy parameters
+    minimal_roi = {"0": 100}  # ROI is managed dynamically by the Triple-Barrier Method
+    stoploss = -0.10          # Hard protection stop loss (fallback only)
+    timeframe = "5m"
+    process_only_new_candles = True
+    startup_candle_count = 300  # Ensure enough candles for 300-period Hurst exponent calculation
+    
+    # FreqAI parameters
+    freqai_info = {
+        "enabled": True,
+        "purge_old_models": True,
+        "train_period_days": 30,
+        "backtest_period_days": 7,
+        "identifier": "optimal-crypto-alpha-v1",
+        "feature_parameters": {
+            "include_timeframes": ["5m", "15m", "1h"],
+            "include_corr_pairlist":,
+            "DI_threshold": 1.0,
+            "use_SVM_to_remove_outliers": True,
+            "svm_params": {
+                "nu": 0.05,
+                "kernel": "rbf"
+            },
+            "principal_component_analysis": True
+        }
+    }
+
+    def populate_indicators(self, dataframe: DataFrame, metadata: dict) -> DataFrame:
+        """
+        Freqtrade entry point for indicator generation.
+        Initializes FreqAI and appends predictions to the dataframe.
+        """
+        # Execute the FreqAI pipeline
+        dataframe = self.freqai.start(dataframe, metadata, self)
+        return dataframe
+
+    def populate_any_indicators(self, dataframe: DataFrame, metadata: dict, strategy) -> DataFrame:
+        """
+        Features defined here are processed by FreqAI.
+        Prefixing with '%' flags them as training features.
+        """
+        # Part 1: Feature Engineering Pipeline
+        pipeline = FeatureEngineeringPipeline()
+        dataframe['%-hurst'] = pipeline.calculate_hurst(dataframe['close'], window=300)
+        dataframe['%-vol_zscore'] = pipeline.calculate_volume_zscore(dataframe['volume'], window=20)
+        dataframe['%-dominant_fft_freq'] = pipeline.calculate_dominant_frequency(dataframe['close'], window=128)
+        dataframe['%-order_book_imbalance_l5'] = pipeline.calculate_order_book_imbalance(dataframe, levels=5)
+        
+        return dataframe
+
+    def set_freqai_targets(self, dataframe: DataFrame, metadata: dict, strategy) -> DataFrame:
+        """
+        Defines the target (label) for model training.
+        """
+        # Part 2: Triple-Barrier Method target labeling
+        labeler = TripleBarrierLabeler()
+        vol = labeler.get_dynamic_volatility(dataframe['close'], span=100)
+        tbm_df = labeler.apply_triple_barrier(dataframe['close'], vol, pt_sl=(2.0, 1.0), vertical_horizon=24)
+        
+        dataframe['&-s_tbm_bin'] = tbm_df['bin'].astype(float)
+        return dataframe
+
+    def populate_entry_trend(self, dataframe: DataFrame, metadata: dict) -> DataFrame:
+        """
+        Evaluates machine learning predictions and filters out anomalies.
+        """
+        dataframe['enter_long'] = 0
+        dataframe['enter_short'] = 0
+        
+        # Part 3: Outlier and Anomaly Screening
+        # do_predict == 1 indicates the prediction is within normal distribution boundaries
+        valid_prediction = dataframe['do_predict'] == 1
+        
+        # Model predictions are mapped to target column names
+        tbm_signal = dataframe['&-s_tbm_bin']
+        
+        # Generate Entry Signals
+        dataframe.loc[valid_prediction & (tbm_signal == 1.0), 'enter_long'] = 1
+        dataframe.loc[valid_prediction & (tbm_signal == -1.0), 'enter_short'] = 1
+        
+        return dataframe
+
+    def populate_exit_trend(self, dataframe: DataFrame, metadata: dict) -> DataFrame:
+        """
+        Manages exits using the calculated target labels.
+        """
+        dataframe['exit_long'] = 0
+        dataframe['exit_short'] = 0
+        
+        tbm_signal = dataframe['&-s_tbm_bin']
+        
+        # Close positions when the target indicates a trend reversal
+        dataframe.loc[tbm_signal == -1.0, 'exit_long'] = 1
+        dataframe.loc[tbm_signal == 1.0, 'exit_short'] = 1
+        
+        return dataframe
+
+    def custom_entry_price(self, pair: str, trade: 'Trade', current_time: 'datetime', propose_rate: float, entry_tag: str, side: str, **kwargs) -> float:
+        """
+        Sets the execution entry price.
+        """
+        return propose_rate
+
+    def custom_stake_amount(self, pair: str, current_time: 'datetime', current_rate: float, proposed_stake: float, min_stake: float, max_stake: float, leverage: float, entry_tag: str, side: str, **kwargs) -> float:
+        """
+        Part 4: Money Management.
+        Sizes stake sizes dynamically using a fractional Kelly Criterion.
+        """
+        dataframe, _ = self.dp.get_analyzed_dataframe(pair, self.timeframe)
+        current_candle = dataframe.iloc[-1]
+        
+        # Estimated historical win rate and payoff ratio for the current model
+        historical_win_rate = 0.55
+        payoff_ratio = 1.5
+        
+        risk_manager = RiskManagementEngine(
+            win_rate=historical_win_rate, 
+            win_loss_ratio=payoff_ratio, 
+            kelly_fraction=0.25  # Quarter-Kelly Sizing
+        )
+        
+        # Calculate dynamic ATR stop-loss distance
+        stop_distance = risk_manager.calculate_atr_distance(
+            dataframe['high'], dataframe['low'], dataframe['close'], 
+            period=14, multiplier=2.0
+        )
+        
+        account_balance = self.wallets.get_total_stake_amount()
+        
+        # Compute capital allocation using the unified sizing formula
+        allocation = risk_manager.compute_allocation(
+            account_balance=account_balance, 
+            entry_price=current_rate, 
+            stop_distance=stop_distance
+        )
+        
+        target_stake = allocation["exposure"]
+        
+        # Restrict stake size to framework parameters
+        if target_stake < min_stake:
+            return 0.0
+        return min(target_stake, max_stake)
+--------------------------------------------------------------------------------
+FreqAI - Freqtrade, https://www.freqtrade.io/en/2022.8/freqai/
+СРАВНИТЕЛЬНЫЙ АНАЛИЗ ЭКОНОМЕТРИЧЕСКИХ МОДЕЛЕЙ И МЕТОДОВ ГЛУБОКОГО ОБУЧЕНИЯ ДЛЯ ПРОГНОЗИРОВАНИЯ ДОХОДНОСТИ АКЦИЙ: ДАННЫЕ KASE, https://7universum.com/en/tech/archive/item/22532
+Mastering FreqAI: Key DataFrame Patterns for Predictive Modeling - Medium, https://medium.com/@hoon33710/mastering-freqai-key-dataframe-patterns-for-predictive-modeling-ccbd58862a00
+Background: Triple Barrier Labeling Method | AI Quantitative Trading: From Zero to One, https://waylandz.com/quant-book-en/Triple-Barrier-Labeling-Method/
+Market Regime using Hidden Markov Model - QuantInsti Blog, https://blog.quantinsti.com/regime-adaptive-trading-python/
+Unit root test and Hurst exponent — Time series analysis with Python, https://filippomb.github.io/python-time-series-handbook/notebooks/06/unit-root-hurst.html
+Hurst Exponent: Calculation, Values and More - QuantInsti Blog, https://blog.quantinsti.com/hurst-exponent/
+Hurst Exponent in Algo Trading - Robot Wealth, https://robotwealth.com/demystifying-the-hurst-exponent-part-2/
+Introduction to the Hurst exponent - with code in Python - Towards Data Science, https://towardsdatascience.com/introduction-to-the-hurst-exponent-with-code-in-python-4da0414ca52e/
+Hurst Exponent in python - Stack Overflow, https://stackoverflow.com/questions/39488806/hurst-exponent-in-python
+Z-Score Futures Trading Strategy - NinjaTrader, https://ninjatrader.com/futures/blogs/z-score-futures-trading-strategy/
+Z-Score Trading Strategy - Risk, Ruin, Example - QuantifiedStrategies.com, https://www.quantifiedstrategies.com/z-score-trading-strategy/
+Calculate and Visualize Orderbook Imbalance for BTCUSDT perp - GitHub Gist, https://gist.github.com/aoki-h-jp/d075341220450e797a4c1047a880d6ee
+Order Book Imbalance Analysis with QuestDB Arrays, https://questdb.com/blog/order-book-imbalance-analysis/
+Microprice and book imbalance - Databento, https://databento.com/docs/examples/order-book/microprice
+Signal Processing with Fast Fourier Transform in Python - Quant Science, https://quantscience.io/newsletter/b/signal-processing-with-fast-fourier-transform
+Fourier Transform, the Practical Python Implementation | Towards Data Science, https://towardsdatascience.com/fourier-transform-the-practical-python-implementation-acdd32f1b96a/
+Feature engineering - Freqtrade, https://www.freqtrade.io/en/stable/freqai-feature-engineering/
+Error when enabling principal_component_analysis · Issue #12066 - GitHub, https://github.com/freqtrade/freqtrade/issues/12066
+The Triple Barrier Method: A Better Way to Label Trades Than Using ..., https://axlfi.com/blog/triple-barrier-method
+Algorithmic trading: triple barrier labelling, https://williamsantos.me/posts/2022/triple-barrier-labelling-algorithm/
+Decentralised-AI/trading-triple-barrier - GitHub, https://github.com/Decentralised-AI/trading-triple-barrier
+Configuration - Freqtrade, https://www.freqtrade.io/en/2022.9/freqai-configuration/
+Configuration - Freqtrade, https://www.freqtrade.io/en/stable/freqai-configuration/
+The Triple Barrier Method: A New Standard for Investment Labeling and Analysis | by NUTHDANAI WANGPRATHAM | DataDrivenInvestor, https://medium.datadriveninvestor.com/the-triple-barrier-method-a-new-standard-for-investment-labeling-and-analysis-1a525a0a2f46
+Feature engineering - Freqtrade, https://www.freqtrade.io/en/2023.2/freqai-feature-engineering/
+Detect Anomalies Using One-Class SVM on PAI - Platform for AI - Alibaba Cloud, https://www.alibabacloud.com/help/en/pai/user-guide/one-class-svm-outlier-detection
+One-Class SVM: Anomaly Detection Deep Dive - MCP Analytics, https://mcpanalytics.ai/whitepapers/whitepaper-one-class-svm
+Anomaly Detection using Support Vectors | by Roshmita Dey - Medium, https://medium.com/@roshmitadey/anomaly-detection-using-support-vectors-2c1b842213ed
+KabirUberoi/Market-Regime-detection-using-Hidden-Markov-Models - GitHub, https://github.com/KabirUberoi/Market-Regime-detection-using-Hidden-Markov-Models
+Hidden Markov Model Market Regimes: How HMM Detects Market ..., https://www.quantifiedstrategies.com/hidden-markov-model-market-regimes-how-hmm-detects-market-regimes-in-trading-strategies/
+Kelly Criterion for Forex: Optimize Your Position Sizing | FXNX, https://fxnx.com/en/blog/kelly-criterion-for-forex-beyond-the-2-risk-rule
+Kelly Criterion in Trading: A Practical Guide | AvaTrade, https://www.avatrade.com/education/technical-analysis-indicators-strategies/the-kelly-criterion
+Kelly Criterion Calculator | Free Trading Position Size Tool - BacktestBase, https://www.backtestbase.com/education/how-much-risk-per-trade
+Kelly Criterion Calculator - MetricGate, https://metricgate.com/docs/kelly-criterion/

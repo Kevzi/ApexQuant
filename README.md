@@ -2,45 +2,45 @@
 
 # 🦅 ApexQuant
 
-**Architecture de trading algorithmique institutionnelle — Alpha LightGBM × Exécution par Reinforcement Learning (PPO)**
+**Institutional algorithmic trading architecture — LightGBM Alpha × Reinforcement Learning (PPO) execution**
 
 ![Status](https://img.shields.io/badge/status-dry--run%20%2F%20validation-yellow)
-![Market](https://img.shields.io/badge/marché-Bybit%20Futures%20(crypto)-orange)
-![Exec](https://img.shields.io/badge/exécution-cTrader%20Open%20API-blue)
+![Market](https://img.shields.io/badge/market-Bybit%20Futures%20(crypto)-orange)
+![Exec](https://img.shields.io/badge/execution-cTrader%20Open%20API-blue)
 ![PropFirms](https://img.shields.io/badge/prop%20firms-Lark%20Funding%20%7C%20FTMO-purple)
 ![Stack](https://img.shields.io/badge/stack-Freqtrade%20%2B%20FreqAI%20%2B%20SB3-black)
 
-*Inspiré de « Advances in Financial Machine Learning » (Marcos López de Prado)*
+*Inspired by "Advances in Financial Machine Learning" (Marcos López de Prado)*
 
 </div>
 
 ---
 
-## 📖 Table des matières
-1. [Philosophie](#-philosophie)
+## 📖 Table of contents
+1. [Philosophy](#-philosophy)
 2. [Architecture](#-architecture)
-3. [Les 4 moteurs](#-les-4-moteurs)
-4. [Le pipeline Alpha en détail](#-le-pipeline-alpha-en-détail)
-5. [Le cœur Reinforcement Learning](#-le-cœur-reinforcement-learning)
-6. [Garde-fous Prop Firm](#-garde-fous-prop-firm)
-7. [Arborescence](#-arborescence)
+3. [The 4 engines](#-the-4-engines)
+4. [The Alpha pipeline in detail](#-the-alpha-pipeline-in-detail)
+5. [The Reinforcement Learning core](#-the-reinforcement-learning-core)
+6. [Prop Firm safeguards](#-prop-firm-safeguards)
+7. [Repository layout](#-repository-layout)
 8. [Installation](#-installation)
-9. [Utilisation](#-utilisation)
+9. [Usage](#-usage)
 10. [Configuration](#-configuration)
-11. [Statut & limites](#-statut--limites-honnête)
-12. [Sécurité](#-sécurité)
+11. [Status & limitations](#-status--limitations-honest)
+12. [Security](#-security)
 13. [Roadmap](#-roadmap)
 
 ---
 
-## 🎯 Philosophie
+## 🎯 Philosophy
 
-ApexQuant repose sur un principe de **découplage** issu de López de Prado : **séparer mathématiquement la génération d'Alpha (le *quoi*) de la politique d'exécution (le *quand / combien*).**
+ApexQuant is built on a **decoupling** principle drawn from López de Prado: **mathematically separate Alpha generation (the *what*) from the execution policy (the *when / how much*).**
 
-- **Cerveau gauche — Alpha (LightGBM)** : produit un signal directionnel *pur*, hors-échantillon, sur des features stationnaires. Il répond à « le marché va-t-il monter ou descendre ? ».
-- **Cerveau droit — Exécution (PPO / Reinforcement Learning)** : décide *quand entrer/sortir*, *combien risquer*, et *quand s'abstenir*, sous contraintes de drawdown Prop Firm. Il répond à « comment trader ce signal sans se faire éliminer ? ».
+- **Left brain — Alpha (LightGBM)**: produces a *pure*, out-of-sample directional signal on stationary features. It answers "will the market go up or down?".
+- **Right brain — Execution (PPO / Reinforcement Learning)**: decides *when to enter/exit*, *how much to risk*, and *when to stand aside*, under Prop Firm drawdown constraints. It answers "how do I trade this signal without getting eliminated?".
 
-> Les prix bruts ne sont **jamais** donnés à l'agent. Seules des features stationnaires (différenciation fractionnaire, z-scores, microstructure) et le signal Alpha entrent dans son espace d'observation.
+> Raw prices are **never** fed to the agent. Only stationary features (fractional differentiation, z-scores, microstructure) and the Alpha signal enter its observation space.
 
 ---
 
@@ -57,21 +57,21 @@ graph TD
         DATA[(Bybit OHLCV<br/>15m + 1m)]
         FD[Fractional Diff FFD<br/>d=0.35]
         DB[Dollar Bars<br/>+ microstructure]
-        TBM[Triple Barrier<br/>symétrique 2.0/2.0]
+        TBM[Triple Barrier<br/>symmetric 2.0/2.0]
         WF[Walk-forward OOS<br/>Purged K-Fold]
-        CSV[(alpha_signals_v20.csv<br/>P↑ directionnel)]
+        CSV[(alpha_signals_v20.csv<br/>directional P↑)]
     end
 
     subgraph RL["🧠 RL Core · Freqtrade + FreqAI"]
-        FE[Feature Engineering<br/>stationnaire + HMM]
-        ENV[PredatorInstitutionalEnv V17<br/>reward risk-aware]
-        PPO[Agent PPO / PFOPPO<br/>Optuna OOS]
+        FE[Feature Engineering<br/>stationary + HMM]
+        ENV[PredatorInstitutionalEnv V17<br/>risk-aware reward]
+        PPO[PPO / PFOPPO agent<br/>Optuna OOS]
         STRAT[FreqaiHybridPPOStrategy<br/>Kelly + HRP + circuit breaker]
     end
 
     subgraph EX["⚡ Execution · ctrader_bridge.py"]
         ZMQ((ZeroMQ<br/>:5555))
-        CAM{Digital Camouflage<br/>délai + jitter volume}
+        CAM{Digital Camouflage<br/>delay + volume jitter}
         TSM[Trailing Stop<br/>Manager v2]
     end
 
@@ -93,99 +93,99 @@ graph TD
     class LARK,FTMO firm
 ```
 
-**Découplage CWD** : le *bridge* et le *dashboard* se lancent depuis la racine du repo ; *freqtrade* depuis `ft_userdata/`. Voir [`docs/ARCHITECTURE_TARGET.md`](docs/ARCHITECTURE_TARGET.md) pour le refactor structurel prévu.
+**CWD decoupling**: the *bridge* and *dashboard* launch from the repo root; *freqtrade* from `ft_userdata/`. See [`docs/ARCHITECTURE_TARGET.md`](docs/ARCHITECTURE_TARGET.md) for the planned structural refactor.
 
 ---
 
-## ⚙️ Les 4 moteurs
+## ⚙️ The 4 engines
 
-| Moteur | Fichier | Rôle |
+| Engine | File | Role |
 |---|---|---|
-| 🔬 **Alpha Factory** | `ft_userdata/user_data/run_alpha_loop.py` → `LGBM_Alpha_Pipeline_V20.py` | Cron : télécharge les données, calcule les features stationnaires, étiquette (Triple Barrier), génère le signal directionnel **walk-forward OOS** dans `alpha_signals_v20.csv`. |
-| 🧠 **RL Core** | `strategies/FreqaiHybridPPOStrategy.py` + `freqaimodels/CustomPPOModel.py` + `environments/PredatorInstitutionalEnv.py` | Entraîne un agent **PPO** qui apprend à exécuter l'Alpha sous contrainte de drawdown, puis émet les ordres via ZMQ. |
-| ⚡ **Execution Bridge** | `infrastructure/execution/ctrader_bridge.py` | Écoute ZMQ `:5555`, applique le camouflage anti-copy-trading, dispatche vers **tous les comptes Prop Firm** simultanément via cTrader Open API. |
-| 📊 **Dashboard** | `infrastructure/monitoring/apexquant_dashboard.py` | Cockpit Streamlit : équité, drawdown, régime HMM, métriques de convergence PPO (via TensorBoard), latences réseau. |
+| 🔬 **Alpha Factory** | `ft_userdata/user_data/run_alpha_loop.py` → `LGBM_Alpha_Pipeline_V20.py` | Cron: downloads data, computes stationary features, labels (Triple Barrier), generates the **walk-forward OOS** directional signal into `alpha_signals_v20.csv`. |
+| 🧠 **RL Core** | `strategies/FreqaiHybridPPOStrategy.py` + `freqaimodels/CustomPPOModel.py` + `environments/PredatorInstitutionalEnv.py` | Trains a **PPO** agent that learns to execute the Alpha under a drawdown constraint, then emits orders over ZMQ. |
+| ⚡ **Execution Bridge** | `infrastructure/execution/ctrader_bridge.py` | Listens on ZMQ `:5555`, applies anti-copy-trading camouflage, dispatches to **all Prop Firm accounts** simultaneously via cTrader Open API. |
+| 📊 **Dashboard** | `infrastructure/monitoring/apexquant_dashboard.py` | Streamlit cockpit: equity, drawdown, HMM regime, PPO convergence metrics (via TensorBoard), network latencies. |
 
 ---
 
-## 🔬 Le pipeline Alpha en détail
+## 🔬 The Alpha pipeline in detail
 
 ```mermaid
 flowchart LR
-    A[OHLCV 1m/15m] --> B["Dollar Bars<br/>(échantillonnage par volume $)"]
-    B --> C["Fractional Diff FFD d=0.35<br/>(stationnaire + mémoire longue)"]
+    A[OHLCV 1m/15m] --> B["Dollar Bars<br/>($-volume sampling)"]
+    B --> C["Fractional Diff FFD d=0.35<br/>(stationary + long memory)"]
     C --> D["Features: RSI norm, OBI,<br/>Z-score, BB width"]
     D --> E["Triple Barrier 2.0/2.0<br/>labels {-1, 0, +1}"]
     E --> F["Purged K-Fold + Embargo<br/>→ Optuna (log-loss)"]
-    F --> G["Walk-forward OOS<br/>(train passé → prédit futur)"]
-    G --> H["Signal directionnel<br/>P↑ / (P↑ + P↓) ∈ [0,1]"]
+    F --> G["Walk-forward OOS<br/>(train on past → predict future)"]
+    G --> H["Directional signal<br/>P↑ / (P↑ + P↓) ∈ [0,1]"]
 ```
 
-**Rigueur anti-overfitting :**
-- **Différenciation fractionnaire (FFD)** — rend les prix stationnaires en préservant la mémoire longue (causal).
-- **Dollar Bars** — échantillonnage par volume monétaire (statistiquement plus stable que le temps), aligné sans look-ahead (`merge_asof backward`).
-- **Triple Barrier symétrique 2.0/2.0** — labels équilibrés hausse/baisse (évite la famine d'exploration du PPO).
-- **Purged K-Fold + Embargo** — élimine les fuites de données dues au chevauchement des labels.
-- **Signal walk-forward OOS** — chaque bougie historique est prédite par un modèle entraîné **uniquement sur son passé** → *aucune fuite in-sample*.
-- **Optimisation sur `log-loss`** (jamais l'accuracy) → pénalise la surconfiance.
+**Anti-overfitting rigor:**
+- **Fractional differentiation (FFD)** — makes prices stationary while preserving long memory (causal).
+- **Dollar Bars** — sampling by monetary volume (statistically more stable than clock time), aligned without look-ahead (`merge_asof backward`).
+- **Symmetric Triple Barrier 2.0/2.0** — balanced up/down labels (avoids PPO exploration starvation).
+- **Purged K-Fold + Embargo** — eliminates data leakage from overlapping labels.
+- **Walk-forward OOS signal** — every historical candle is predicted by a model trained **only on its past** → *no in-sample leakage*.
+- **Optimization on `log-loss`** (never accuracy) → penalizes overconfidence.
 
 ---
 
-## 🧠 Le cœur Reinforcement Learning
+## 🧠 The Reinforcement Learning core
 
-**Environnement — `PredatorInstitutionalEnv` (V17)**
-Fonction de récompense *risk-aware* :
+**Environment — `PredatorInstitutionalEnv` (V17)**
+*Risk-aware* reward function:
 
 ```
-reward = profit_réalisé  −  (Downside Deviation × 15)  −  Pénalité_Drawdown_exponentielle
+reward = realized_profit  −  (Downside Deviation × 15)  −  exponential_Drawdown_penalty
 ```
 
-- **Downside Deviation** (semi-variance) : pénalise la volatilité *baissière* uniquement.
-- **Pénalité de drawdown exponentielle** au-delà de **3 %** (marge de sécurité FTMO), plafonnée.
-- **Action Masking** : bloque les entrées quand le **régime HMM** est chaotique.
-- `reset()` réinitialise l'équité pic par épisode (pas de pénalité fantôme).
+- **Downside Deviation** (semi-variance): penalizes *downside* volatility only.
+- **Exponential drawdown penalty** beyond **3%** (FTMO safety margin), capped.
+- **Action Masking**: blocks entries when the **HMM regime** is chaotic.
+- `reset()` resets peak equity per episode (no phantom penalty).
 
-**Modèle — `CustomPPOModel` (PFOPPO)**
-- PPO (Stable-Baselines3) surchargé avec régularisation de l'extracteur de features.
-- Tuning **Optuna** évalué **out-of-sample** (`eval_env`) sur l'explained variance des rendements actualisés.
+**Model — `CustomPPOModel` (PFOPPO)**
+- PPO (Stable-Baselines3) overridden with feature-extractor regularization.
+- **Optuna** tuning evaluated **out-of-sample** (`eval_env`) on the explained variance of discounted returns.
 
-**Stratégie — `FreqaiHybridPPOStrategy`**
-- Consomme `&-action` (décision PPO) + `%-lgbm_predict` (Alpha).
-- **Sizing Half-Kelly** borné (abstention si edge négatif).
-- **Allocation HRP** rechargée à chaud depuis `hrp_allocations.csv`.
-- **Circuit-breaker** stop-loss + protection `MaxDrawdown` à 4 %.
-- Levier x3 isolé, émission des ordres par **ZeroMQ** vers le bridge.
+**Strategy — `FreqaiHybridPPOStrategy`**
+- Consumes `&-action` (PPO decision) + `%-lgbm_predict` (Alpha).
+- **Half-Kelly sizing**, bounded (stands aside if edge is negative).
+- **HRP allocation** hot-reloaded from `hrp_allocations.csv`.
+- **Circuit-breaker** stop-loss + `MaxDrawdown` protection at 4%.
+- x3 isolated leverage, order emission over **ZeroMQ** to the bridge.
 
 ---
 
-## 🛡️ Garde-fous Prop Firm
+## 🛡️ Prop Firm safeguards
 
-| Garde-fou | Mécanisme |
+| Safeguard | Mechanism |
 |---|---|
-| **Drawdown quotidien** | Pénalité RL exponentielle >3 % + protection Freqtrade `MaxDrawdown` 4 % (marge sous la limite 5 %) |
-| **Circuit-breaker** | Stop-loss d'urgence permanent (`self.stoploss`), jamais désactivé |
-| **Anti-martingale** | Sizing Half-Kelly, abstention si edge ≤ 0 |
-| **Anti-copy-trading** | Délai temporel aléatoire (1–5 s) + jittering de volume (±2 %) par compte |
-| **Régime toxique** | Masking des entrées si HMM = chaotique |
+| **Daily drawdown** | Exponential RL penalty >3% + Freqtrade `MaxDrawdown` protection at 4% (margin below the 5% limit) |
+| **Circuit-breaker** | Permanent emergency stop-loss (`self.stoploss`), never disabled |
+| **Anti-martingale** | Half-Kelly sizing, stand aside if edge ≤ 0 |
+| **Anti-copy-trading** | Random time delay (1–5s) + volume jittering (±2%) per account |
+| **Toxic regime** | Entry masking if HMM = chaotic |
 
 ---
 
-## 📂 Arborescence
+## 📂 Repository layout
 
 ```text
 ApexQuant/
-├── start_apexquant_live.sh          # Lance bridge + freqtrade + dashboard
+├── start_apexquant_live.sh          # Launches bridge + freqtrade + dashboard
 ├── start_paper_trading.sh
-├── ctrader_tokens.json              # ⚠️ creds (gitignore) — à fournir localement
+├── ctrader_tokens.json              # ⚠️ creds (gitignored) — provide locally
 ├── docs/
-│   ├── DOCU.MD                       # Fondations théoriques
-│   ├── Technical_blueprint.txt       # Blueprint feature engineering
-│   └── ARCHITECTURE_TARGET.md        # Refactor structurel prévu
+│   ├── DOCU.MD                       # Theoretical foundations
+│   ├── Technical_blueprint.txt       # Feature-engineering blueprint
+│   └── ARCHITECTURE_TARGET.md        # Planned structural refactor
 ├── ft_userdata/
 │   ├── hrp_allocations.csv · hrp_allocator.py
 │   └── user_data/
-│       ├── LGBM_Alpha_Pipeline_V20.py   # Pipeline Alpha (walk-forward OOS)
-│       ├── run_alpha_loop.py            # Cron Alpha Factory
+│       ├── LGBM_Alpha_Pipeline_V20.py   # Alpha pipeline (walk-forward OOS)
+│       ├── run_alpha_loop.py            # Alpha Factory cron
 │       ├── config_live.json · config_freqai_rl-v10.json · config_backtest_v20.json
 │       ├── strategies/FreqaiHybridPPOStrategy.py
 │       ├── freqaimodels/CustomPPOModel.py
@@ -201,26 +201,26 @@ ApexQuant/
 ## 🚀 Installation
 
 ```bash
-# 1. Cloner
+# 1. Clone
 git clone https://github.com/Kevzi/ApexQuant.git && cd ApexQuant
 
-# 2. Environnement Freqtrade + FreqAI (Python 3.10+)
+# 2. Freqtrade + FreqAI environment (Python 3.10+)
 python -m venv .env && source .env/bin/activate
 pip install freqtrade[freqai,freqai_rl]        # + lightgbm, optuna, hmmlearn, pyzmq, ctrader-open-api
 
-# 3. Fournir les credentials cTrader
-cp ctrader_tokens.example.json ctrader_tokens.json   # puis renseigner les IDs/tokens Spotware
+# 3. Provide cTrader credentials
+cp ctrader_tokens.example.json ctrader_tokens.json   # then fill in the Spotware IDs/tokens
 
-# 4. Télécharger les données de marché
+# 4. Download market data
 cd ft_userdata
 freqtrade download-data --config user_data/config_live.json --timerange 20220101- -t 1m 15m 1h 4h
 ```
 
 ---
 
-## 🖥️ Utilisation
+## 🖥️ Usage
 
-**1 — Générer le signal Alpha (OOS)**
+**1 — Generate the Alpha signal (OOS)**
 ```bash
 cd ft_userdata
 python user_data/LGBM_Alpha_Pipeline_V20.py \
@@ -239,7 +239,7 @@ freqtrade backtesting \
   --timerange 20260401-20260701
 ```
 
-**3 — Live / Paper trading (stack complet)**
+**3 — Live / Paper trading (full stack)**
 ```bash
 ./start_apexquant_live.sh          # bridge + freqtrade trade + dashboard (:8501)
 ```
@@ -248,54 +248,54 @@ freqtrade backtesting \
 
 ## 🔧 Configuration
 
-| Clé | Fichier | Valeur |
+| Key | File | Value |
 |---|---|---|
-| Exchange / marché | `config_live.json` | Bybit futures, USDT, isolated |
-| Timeframe | `config_freqai_rl-v10.json` | 15m (corr : 1h, 4h) |
-| Paires actives | `config_freqai_rl-v10.json` | BTC, ETH (extensible) |
-| Levier | stratégie | x3 |
+| Exchange / market | `config_live.json` | Bybit futures, USDT, isolated |
+| Timeframe | `config_freqai_rl-v10.json` | 15m (corr: 1h, 4h) |
+| Active pairs | `config_freqai_rl-v10.json` | BTC, ETH (extensible) |
+| Leverage | strategy | x3 |
 | `train_period_days` / `backtest_period_days` | `config_freqai_rl-v10.json` | 30 / 7 |
-| `total_timesteps` PPO | `config_freqai_rl-v10.json` | 350 000 |
-| `optuna_tuning` | `config_freqai_rl-v10.json` | `false` par défaut |
+| PPO `total_timesteps` | `config_freqai_rl-v10.json` | 350,000 |
+| `optuna_tuning` | `config_freqai_rl-v10.json` | `false` by default |
 
 ---
 
-## 📊 Statut & limites (honnête)
+## 📊 Status & limitations (honest)
 
-> **⚠️ Ce système est en phase de validation (dry-run). L'edge n'est pas encore prouvé.**
+> **⚠️ This system is in a validation phase (dry-run). The edge is not yet proven.**
 
-- ✅ Infrastructure live opérationnelle (bridge multi-comptes, dashboard, cron Alpha).
-- ✅ Pipeline Alpha **sans fuite** (walk-forward OOS) et environnement RL corrigé.
-- ⏳ **Performance non validée** : à remplir avec des backtests multi-périodes + Monte-Carlo avant tout capital réel.
-- ⏳ **Refactor structurel** en attente (voir `docs/ARCHITECTURE_TARGET.md`).
-- ℹ️ Le filtrage d'anomalies par *Dissimilarity Index* décrit dans le blueprint est **désactivé par FreqAI en mode RL** ; la protection réelle vient du masking HMM + pénalité de drawdown + `MaxDrawdown`.
+- ✅ Live infrastructure operational (multi-account bridge, dashboard, Alpha cron).
+- ✅ **Leak-free** Alpha pipeline (walk-forward OOS) and corrected RL environment.
+- ⏳ **Performance not validated**: to be filled with multi-period backtests + Monte Carlo before any real capital.
+- ⏳ **Structural refactor** pending (see `docs/ARCHITECTURE_TARGET.md`).
+- ℹ️ The *Dissimilarity Index* anomaly filtering described in the blueprint is **disabled by FreqAI in RL mode**; the real protection comes from HMM masking + drawdown penalty + `MaxDrawdown`.
 
-| Métrique (à valider) | BTC | ETH |
+| Metric (to validate) | BTC | ETH |
 |---|---|---|
-| Profit net % | _à remplir_ | _à remplir_ |
-| Nb trades | _à remplir_ | _à remplir_ |
-| Max drawdown % | _à remplir_ | _à remplir_ |
-| Sharpe / Sortino | _à remplir_ | _à remplir_ |
+| Net profit % | _TBD_ | _TBD_ |
+| # trades | _TBD_ | _TBD_ |
+| Max drawdown % | _TBD_ | _TBD_ |
+| Sharpe / Sortino | _TBD_ | _TBD_ |
 
 ---
 
-## 🔐 Sécurité
+## 🔐 Security
 
-- **`ctrader_tokens.json`** (tokens cTrader) est **gitignore** — ne jamais le committer.
-- Ne stockez **aucun** identifiant/mot de passe en clair dans le repo (préférez variables d'environnement / gestionnaire de secrets).
-- Ce repo est **privé** ; le maintenir privé tant que des configs de comptes réels y figurent.
+- **`ctrader_tokens.json`** (cTrader tokens) is **gitignored** — never commit it.
+- Store **no** credentials/passwords in cleartext in the repo (prefer environment variables / a secrets manager).
+- Tracked config files ship with **placeholders only** (`VOTRE_CLE_BYBIT`, etc.) — never replace them with real keys in a committed file. This repo is **public**, so keep every real credential out of version control.
 
 ---
 
 ## 🗺️ Roadmap
 
-- [ ] Backtests multi-périodes + validation Walk-Forward Efficiency ≥ 0.7 + Monte-Carlo.
-- [ ] Activer/évaluer le tuning Optuna PPO corrigé (OOS).
-- [ ] Refactor structurel : `user_data/` unique, chemins pilotés par config.
-- [ ] Extension progressive des paires (SOL, BNB, …) une fois l'edge confirmé sur BTC/ETH.
+- [ ] Multi-period backtests + Walk-Forward Efficiency ≥ 0.7 validation + Monte Carlo.
+- [ ] Enable/evaluate the corrected PPO Optuna tuning (OOS).
+- [ ] Structural refactor: single `user_data/`, config-driven paths.
+- [ ] Gradual pair expansion (SOL, BNB, …) once the edge is confirmed on BTC/ETH.
 
 ---
 
 <div align="center">
-<sub>La rentabilité d'un modèle ne vient pas de sa précision directionnelle, mais de la robustesse mathématique de la gestion de ses échecs.</sub>
+<sub>A model's profitability comes not from its directional accuracy, but from the mathematical robustness of how it manages its failures.</sub>
 </div>

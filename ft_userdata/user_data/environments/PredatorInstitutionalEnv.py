@@ -21,6 +21,7 @@ class PredatorInstitutionalEnv(Base5ActionRLEnv):
         self.returns_history = collections.deque(maxlen=288)
         self._peak_equity = 1.0
         self._last_equity = 1.0
+        self._prev_unrealized = 0.0
 
     def reset(self, seed=None, **kwargs):
         """
@@ -32,6 +33,7 @@ class PredatorInstitutionalEnv(Base5ActionRLEnv):
         obs = super().reset(seed=seed)
         self._peak_equity = 1.0
         self._last_equity = 1.0
+        self._prev_unrealized = 0.0
         self.returns_history.clear()
         return obs
 
@@ -45,6 +47,9 @@ class PredatorInstitutionalEnv(Base5ActionRLEnv):
         taker_fee = 0.00055
         leverage = 3.0
         
+        prev_unrealized = getattr(self, '_prev_unrealized', 0.0)
+        is_exit_action = action in (Actions.Long_exit.value, Actions.Short_exit.value)
+
         raw_reward = 0.0
         if not is_in_trade:
             if action in (Actions.Long_enter.value, Actions.Short_enter.value):
@@ -52,14 +57,21 @@ class PredatorInstitutionalEnv(Base5ActionRLEnv):
             elif action == Actions.Neutral.value:
                 raw_reward += 0.00001
         else:
-            if action in (Actions.Long_exit.value, Actions.Short_exit.value):
+            if is_exit_action:
+                # Sortie : on réalise le PnL de façon SYMÉTRIQUE.
+                # (L'ancienne pénalité ×2 sur les pertes apprenait à l'agent à CONSERVER
+                #  ses positions perdantes plutôt que de les couper -> effet de disposition.)
                 actual_profit = current_profit - (taker_fee * leverage)
-                if actual_profit > 0:
-                    raw_reward += actual_profit
-                else:
-                    raw_reward += actual_profit * 2.0
+                raw_reward += actual_profit
             else:
-                raw_reward += current_profit * 0.05
+                # Maintien : récompense = variation du PnL latent sur ce pas (mark-to-market).
+                # Laisser courir une perte est donc pénalisé en proportion de la perte,
+                # et couper une perte n'est jamais plus coûteux que de la garder.
+                raw_reward += (current_profit - prev_unrealized)
+
+        # Mémorise le PnL latent pour le mark-to-market du prochain pas
+        # (0.0 si on n'est pas/plus en position, pour repartir propre au prochain trade).
+        self._prev_unrealized = current_profit if (is_in_trade and not is_exit_action) else 0.0
         
         # ⚠️ CORRECTION MAJEURE : calcul de l'équité sous forme absolue pour éviter d'avoir 100% de drawdown dès le départ
         # Ajouter 1.0 permet de reconstituer une courbe d'équité démarrant à 1.0.

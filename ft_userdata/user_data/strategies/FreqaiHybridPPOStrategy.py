@@ -47,6 +47,12 @@ class FreqaiHybridPPOStrategy(IStrategy):
 
     def __init__(self, config: dict) -> None:
         super().__init__(config)
+        # RESEARCH MODE : diagnostic uniquement. Quand Kelly<=0, on planche le risque
+        # (0.5%) au lieu d'abstenir (stake=0), pour évaluer la perf BRUTE de l'alpha
+        # sur tout l'échantillon. NE JAMAIS activer en prod (piloté par config overlay).
+        self.research_mode = bool(config.get('research_mode', False))
+        if self.research_mode:
+            logger.warning("[RESEARCH MODE] ACTIF : abstention Kelly désactivée (plancher 0.5%). Diagnostic uniquement, PAS pour la prod.")
         # Initialisation du pipeline ZMQ vers cTrader
         self.zmq_context = zmq.Context()
         self.zmq_socket = self.zmq_context.socket(zmq.PUSH)
@@ -469,7 +475,7 @@ class FreqaiHybridPPOStrategy(IStrategy):
                     elif hmm == 1:
                         narrative += f"Décision : OBSERVATION. Le régime de marché est identifié comme CHAOTIQUE (HMM=1). Volatilité: {atr:.4f}. Signaux coupés par sécurité."
                     else:
-                        trades = Trade.get_trades([Trade.pair == pair, Trade.is_open == True]).all()
+                        trades = Trade.get_trades_proxy(pair=pair, is_open=True)
                         has_trade = len(trades) > 0
                         is_long = has_trade and not trades[0].is_short
                         is_short = has_trade and trades[0].is_short
@@ -574,7 +580,7 @@ class FreqaiHybridPPOStrategy(IStrategy):
         if self.wallets:
             total_balance = self.wallets.get_total('USDT')
             
-        trades = Trade.get_trades([Trade.is_open == False]).all()
+        trades = Trade.get_trades_proxy(is_open=False)
         if len(trades) >= 5:
             winning_trades = [t for t in trades if t.close_profit > 0]
             win_rate = len(winning_trades) / len(trades)
@@ -588,12 +594,18 @@ class FreqaiHybridPPOStrategy(IStrategy):
             half_kelly_risk = kelly_pct / 2.0
 
             # Edge défavorable (Kelly <= 0) -> abstention totale : on ne trade pas.
+            # EXCEPTION research_mode : on planche le risque à 0.5% pour diagnostiquer l'alpha
+            # sur tout l'échantillon (sinon le sizing coupe le trading et on est aveugles).
             if half_kelly_risk <= 0:
-                logger.info("[Half-Kelly] Edge négatif détecté (Kelly<=0). Abstention : stake=0.")
-                return 0.0
-
-            # Plancher retiré (le risque peut descendre près de 0) ; plafond conservé à 1.5%.
-            risk_pct = min(0.015, half_kelly_risk)
+                if self.research_mode:
+                    logger.info("[Half-Kelly][RESEARCH] Edge négatif mais research_mode ON -> plancher risque 0.5%.")
+                    risk_pct = 0.005
+                else:
+                    logger.info("[Half-Kelly] Edge négatif détecté (Kelly<=0). Abstention : stake=0.")
+                    return 0.0
+            else:
+                # Plancher retiré (le risque peut descendre près de 0) ; plafond conservé à 1.5%.
+                risk_pct = min(0.015, half_kelly_risk)
         else:
             # Risque par défaut si historique insuffisant : 1%
             risk_pct = 0.01

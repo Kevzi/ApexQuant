@@ -22,14 +22,15 @@
 3. [The 4 engines](#-the-4-engines)
 4. [The Alpha pipeline in detail](#-the-alpha-pipeline-in-detail)
 5. [The Reinforcement Learning core](#-the-reinforcement-learning-core)
-6. [Prop Firm safeguards](#-prop-firm-safeguards)
-7. [Repository layout](#-repository-layout)
-8. [Installation](#-installation)
-9. [Usage](#-usage)
-10. [Configuration](#-configuration)
-11. [Status & limitations](#-status--limitations-honest)
-12. [Security](#-security)
-13. [Roadmap](#-roadmap)
+6. [Research mode](#-research-mode)
+7. [Prop Firm safeguards](#-prop-firm-safeguards)
+8. [Repository layout](#-repository-layout)
+9. [Installation](#-installation)
+10. [Usage](#-usage)
+11. [Configuration](#-configuration)
+12. [Status & limitations](#-status--limitations-honest)
+13. [Security](#-security)
+14. [Roadmap](#-roadmap)
 
 ---
 
@@ -129,6 +130,8 @@ flowchart LR
 - **Walk-forward OOS signal** — every historical candle is predicted by a model trained **only on its past** → *no in-sample leakage*.
 - **Optimization on `log-loss`** (never accuracy) → penalizes overconfidence.
 
+**Alternative-data collection *(recent, work in progress)*** — `download_velo.py` pulls Bybit perp **Open Interest, funding rate, order flow (buy/sell volume) and liquidations** from Velo Data (1h, since 2021) into CSVs (`velo_*_1h.csv`, `bybit_oi_*.csv`). These series are **collected but not yet wired into the feature set** — they are staged for an upcoming microstructure/positioning feature layer, not currently consumed by the Alpha pipeline.
+
 ---
 
 ## 🧠 The Reinforcement Learning core
@@ -144,6 +147,8 @@ reward = realized_profit  −  (Downside Deviation × 15)  −  exponential_Draw
 - **Exponential drawdown penalty** beyond **3%** (FTMO safety margin), capped.
 - **Action Masking**: blocks entries when the **HMM regime** is chaotic.
 - `reset()` resets peak equity per episode (no phantom penalty).
+- **Mark-to-market in-trade reward** *(recent)*: while a position is held, reward = the change in unrealized PnL over the step. Letting a loss run is therefore penalized in proportion to that loss, step by step.
+- **Symmetric exit** *(recent)*: the old ×2 penalty on losing exits was removed — it trained a **disposition effect** (the agent learned to hold losers rather than cut them). Cutting a loss is now never costlier than keeping it.
 
 **Model — `CustomPPOModel` (PFOPPO)**
 - PPO (Stable-Baselines3) overridden with feature-extractor regularization.
@@ -155,6 +160,15 @@ reward = realized_profit  −  (Downside Deviation × 15)  −  exponential_Draw
 - **HRP allocation** hot-reloaded from `hrp_allocations.csv`.
 - **Circuit-breaker** stop-loss + `MaxDrawdown` protection at 4%.
 - x3 isolated leverage, order emission over **ZeroMQ** to the bridge.
+
+---
+
+## 🔬 Research mode
+
+A diagnostic overlay (`config_research.json` → `{"research_mode": true}`) that changes **one** behavior: when Half-Kelly sizing computes a non-positive edge, the strategy **floors risk at 0.5%** instead of standing aside (`stake = 0`).
+
+- **Why**: in production the sizing correctly refuses to trade a negative edge — but that also makes the *raw* Alpha invisible in a backtest (no trades = no signal to measure). Research mode forces trading across the whole sample so the Alpha's raw performance can be evaluated.
+- **⚠️ Never enable in production.** It is loaded as a config overlay and logs a loud warning on startup; the default (`research_mode = false`) always abstains on a negative edge.
 
 ---
 
@@ -186,7 +200,10 @@ ApexQuant/
 │   └── user_data/
 │       ├── LGBM_Alpha_Pipeline_V20.py   # Alpha pipeline (walk-forward OOS)
 │       ├── run_alpha_loop.py            # Alpha Factory cron
+│       ├── download_velo.py             # Alt-data fetch: OI/funding/flow/liquidations (Velo)
+│       ├── bybit_oi_*.csv               # Collected Open Interest series (not yet wired)
 │       ├── config_live.json · config_freqai_rl-v10.json · config_backtest_v20.json
+│       ├── config_research.json         # Overlay: research_mode (diagnostic only)
 │       ├── strategies/FreqaiHybridPPOStrategy.py
 │       ├── freqaimodels/CustomPPOModel.py
 │       └── environments/PredatorInstitutionalEnv.py
@@ -239,6 +256,11 @@ freqtrade backtesting \
   --timerange 20260401-20260701
 ```
 
+> **Alpha diagnostic (research mode)** — add the overlay to force trading across the whole sample and measure the raw Alpha (never use these results as production expectations):
+> ```bash
+> freqtrade backtesting ... --config user_data/config_research.json
+> ```
+
 **3 — Live / Paper trading (full stack)**
 ```bash
 ./start_apexquant_live.sh          # bridge + freqtrade trade + dashboard (:8501)
@@ -254,9 +276,11 @@ freqtrade backtesting \
 | Timeframe | `config_freqai_rl-v10.json` | 15m (corr: 1h, 4h) |
 | Active pairs | `config_freqai_rl-v10.json` | BTC, ETH (extensible) |
 | Leverage | strategy | x3 |
+| Entry/exit `price_side` | `config_live.json` / `config_freqai_rl-v10.json` | `other` (cross the book for fills) |
 | `train_period_days` / `backtest_period_days` | `config_freqai_rl-v10.json` | 30 / 7 |
 | PPO `total_timesteps` | `config_freqai_rl-v10.json` | 350,000 |
 | `optuna_tuning` | `config_freqai_rl-v10.json` | `false` by default |
+| `research_mode` | `config_research.json` (overlay) | `false` in prod — floors risk instead of abstaining |
 
 ---
 
@@ -266,7 +290,10 @@ freqtrade backtesting \
 
 - ✅ Live infrastructure operational (multi-account bridge, dashboard, Alpha cron).
 - ✅ **Leak-free** Alpha pipeline (walk-forward OOS) and corrected RL environment.
-- ⏳ **Performance not validated**: to be filled with multi-period backtests + Monte Carlo before any real capital.
+- ✅ **RL reward reworked**: mark-to-market in-trade reward + symmetric exits (removes the disposition-effect bias that hoarded losing positions).
+- 🔬 **Research mode** added to diagnose the raw Alpha (floors risk instead of abstaining) — diagnostic only.
+- ⏳ **Exploratory backtests** run (`backtest_results/`, Jul 2026); **performance still not validated** — needs multi-period backtests + Monte Carlo before any real capital.
+- ⏳ **Alt-data (OI/funding/flow/liquidations)** collected but not yet wired into features.
 - ⏳ **Structural refactor** pending (see `docs/ARCHITECTURE_TARGET.md`).
 - ℹ️ The *Dissimilarity Index* anomaly filtering described in the blueprint is **disabled by FreqAI in RL mode**; the real protection comes from HMM masking + drawdown penalty + `MaxDrawdown`.
 
